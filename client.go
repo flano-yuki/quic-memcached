@@ -135,6 +135,7 @@ func main() {
 	// Read from stdin.
 	go func() {
 		for {
+			a := make([]byte, 1024)
 			b := make([]byte, 1024)
 			n, err := os.Stdin.Read(b)
 			if err != nil {
@@ -142,7 +143,18 @@ func main() {
 				return
 			}
 			b = b[:n]
-			stdin <- b
+			//if command is set, read 2 line...
+			if string(b[0:3]) == "set" {
+				n, err := os.Stdin.Read(a)
+				if err != nil {
+					stdin <- nil
+					return
+				}
+				a = a[:n]
+				stdin <- append(b, a...)
+			} else {
+				stdin <- b
+			}
 		}
 	}()
 

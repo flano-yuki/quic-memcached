@@ -5,11 +5,24 @@ import (
 	"fmt"
 	"github.com/ekr/minq"
 	"net"
+	"strconv"
+	"strings"
 	"time"
 )
 
 var addr string
 var serverName string
+
+var memcMap = map[string]Record{}
+var rest []string
+
+type Record struct {
+	Key    string
+	Value  string
+	Flag   int
+	Expire int64
+	Create int64
+}
 
 type conn struct {
 	conn *minq.Connection
@@ -57,16 +70,56 @@ func (h *connHandler) StreamReadable(s *minq.Stream) {
 	}
 	b = b[:n]
 
+	str := string(b)
+
+	str = strings.Replace(str, "\n", " ", -1)
+	strs := strings.Split(str, " ")
+	command := strs[0]
+	args := strs[1:]
+
 	fmt.Printf("Read %v bytes from peer %x\n", n, b)
 
-	// Flip the case so we can distinguish echo
-	for i, _ := range b {
-		if b[i] > 0x40 {
-			b[i] ^= 0x20
-		}
+	//set test record
+	test := Record{
+		Key:   "key",
+		Value: "value",
+		Flag:  10,
 	}
+	memcMap["test"] = test
+	if command == "get" {
+		fmt.Printf("get key:%s\n", args[0])
+		record, ok := memcMap[args[0]]
+		output := "END\n"
+		//expire
+		if ok && (record.Expire > 0 && record.Create+record.Expire < time.Now().Unix()) {
+			delete(memcMap, args[0])
+			ok = false
+		}
+		if ok {
+			output = "VALUE " + record.Key + " " + strconv.Itoa(record.Flag) + " " +
+				strconv.Itoa(len(record.Value)) + "\n" +
+				record.Value + "\n" + output
+		}
+		s.Write([]byte(output))
+	} else if command == "set" {
+		fmt.Printf("set key:%s value:%s\n", args[0], args[4])
+		flag, _ := strconv.Atoi(args[1])
+		expire, _ := strconv.Atoi(args[2])
 
-	s.Write(b)
+		record := Record{
+			Key:    args[0],
+			Flag:   flag,
+			Expire: int64(expire),
+			Value:  args[4], //TODO join by space
+			Create: time.Now().Unix(),
+		}
+		memcMap[args[0]] = record
+		s.Write([]byte("STORED\n"))
+	} else if command == "version" {
+		s.Write([]byte("VERSION 0.0.0"))
+	} else {
+		s.Write([]byte("ERROR\n"))
+	}
 }
 
 func main() {
